@@ -30,13 +30,33 @@ jobs:
           url = os.environ.get("VVK_JSON_URL", "").strip()
           if not url:
               sys.exit("Secret VVK_JSON_URL fehlt")
-          url += ("&" if "?" in url else "?") + "download=1"
-          req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-          raw = urllib.request.urlopen(req, timeout=60).read().decode("utf-8-sig")
-          try:
-              neu = json.loads(raw)
-          except ValueError:
-              sys.exit("Download ist kein JSON (Freigabelink prüfen: 'Jeder mit dem Link')")
+          import urllib.parse
+          basis = url.split("?")[0]
+          kandidaten = [basis + "?download=1", url + ("&" if "?" in url else "?") + "download=1"]
+          # SharePoint/OneDrive-Freigabelink (…/:u:/g/personal/<user>/<token>) → download.aspx
+          m = re.match(r"(https://[^/]+)/:\w:/\w/(personal/[^/]+)/([^/?]+)", basis)
+          if m:
+              kandidaten.insert(0, f"{m.group(1)}/{m.group(2)}/_layouts/15/download.aspx?share={m.group(3)}")
+
+          neu = None
+          for i, k in enumerate(kandidaten, 1):
+              try:
+                  resp = urllib.request.urlopen(urllib.request.Request(
+                      k, headers={"User-Agent": "Mozilla/5.0", "Accept": "*/*"}), timeout=60)
+                  raw = resp.read().decode("utf-8-sig", "replace")
+                  ziel = urllib.parse.urlparse(resp.geturl()).netloc
+              except Exception as ex:
+                  print(f"Variante {i}: Fehler {getattr(ex, 'code', '')} {type(ex).__name__}")
+                  continue
+              try:
+                  neu = json.loads(raw)
+                  print(f"Variante {i}: OK")
+                  break
+              except ValueError:
+                  hinweis = "Microsoft-Anmeldung -> Link ist nicht für 'Jeder' freigegeben" if "login" in ziel else "kein JSON"
+                  print(f"Variante {i}: {hinweis} (Ziel: {ziel}, Anfang: {raw[:60]!r})")
+          if neu is None:
+              sys.exit("Download fehlgeschlagen (siehe Varianten oben)")
 
           # Strenge Prüfung: nur Datum, KW und Ticketzahlen
           if not isinstance(neu, list) or not neu:
